@@ -1,0 +1,3 @@
+#!/bin/zsh
+
+curl -v -X POST --data 'BLEH' 127.0.0.1:$(/labs/tsam17/my_port)

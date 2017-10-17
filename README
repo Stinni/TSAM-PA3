@@ -1,0 +1,96 @@
+HTTP server Implementation										  2017-10-08
+
+						HTTP SERVER IMPLEMENTATION
+
+----------------------------------------------------------------------------
+						Structure of Implementation
+----------------------------------------------------------------------------
+ Our implmentation of a HTTP server starts with a declaration of a few
+constants and the included libraries. We then declare a struct to keep track
+of information of connected clients. We then declare our functions.
+
+							~~~ Functions ~~~
+ We have a few functions to help us with making the server behave as it is
+supposed to.
+  a. getCurrentDateTimeAsString - date and time in custom format
+	 The function gets the current date and time, custom formats it and
+	 then returns it.
+  b. getCurrentDateTimeAsISOString - date and time in ISO 8601 format
+	 The function gets the current date and time, and then returns it in
+	 the ISO 8601 format.
+  c. getPageString - handles content creation
+	 This function creates the content page for GET and POST requests and
+	 returns it to the caller of the function.
+  d. logRecvMessage - writes to log
+	 This function writes client requests the server receives to a log file.
+	 It writes the date and time, the client's IP and port numbers, the type
+	 of request, the requested URL and the response the server gave the
+	 client.
+  e. sendHeadResponse - handles HEAD requests
+	 This function structures a response if a client sends a HEAD request
+	 and then sends the response to the client.
+  f. processGetRequest - handles GET requests
+	 This function structures a response if a client sends a GET request
+	 and then sends the response to the client.
+  g. sendNotFoundResponse - handles 404 responses to GET requests
+	 This function is called if a GET request is sent and anything but
+	 the base URL or index.html is requested
+  h. processPostRequest - handles POST requests
+	 This function structures a response if a client sends a POST request
+	 and then sends the response to the client.
+  i. sendNotImplementedResponse - handles unhandled requests
+	 If the request is not HEAD, GET or POST this function is called. It
+	 creates a '501 Not implmented' response and sends it back to the 
+	 client.
+  j. printHashMap - test function, not used during normal runtime
+	 This debugging function is used to print out keys and values in the
+	 hash map that stores the information about the header fields.
+
+						  ~~~ Main section ~~~
+ The main section of our program takes care of command line arguments and
+sets up the basic information and variable the server uses. It also handles
+all the logic of the server.
+ Here we also set up everything necessary to use poll() and allowing
+multiple clients to connect to the server. Basic information about a client
+is stored in an array of a custom struct, ClientInfo.
+ We check on errors and timeouts when using poll(), and handle those
+instances specifically. Such as, closing any persistent connection related
+to that specific client.
+ There is also a check on if the server can accept more connections. We
+decided to have an upper limit of 64 allowed connections, mostly to see how
+we could handle those situations and to make things easier for us for
+polling the status of the currently connected clients.
+ If there is incoming data on the server socket we take in the size of the
+data we received into a variable. If the reception of the data goes wrong 
+we close the connection.
+Otherwise we start splitting the data we received from the client into
+smaller bits that we can use. All the header fields go into a hash table,
+while the rest goes into their own variables. These are then used by the
+program to decide what is the appropiate next step.
+ We check whether or not the connection to the client should be presistent
+by checking certain values of the request, e.g. the HTTP version and the
+contents of the Connection field if it has one. We then check what type of 
+response the client expects and call the appropiate function.
+ Finally, there is a check whether or not the connection is persistent. If
+not then the connection is closed.
+
+----------------------------------------------------------------------------
+							Handling fairness
+----------------------------------------------------------------------------
+
+ The server has a maximum of 10 backlogged and 64 possible persistent
+connections. And after 30 seconds the poll() function times out and all the
+persistent connctions are closed and cleared up. It's highly unlikely that
+our server will ever encounter higher numbers than that. But if there ever
+was any possibility of that happening, we can raise those numbers. The
+number of open connections can be brought up to 1024 according to the info
+we found about the poll() function.
+ Although that doesn't completely eliminate the possibility of a connection
+being lost, and fairness being guaranteed, it still come pretty close under
+normal circumstances.
+ Fairness for accepted/persistent connections is guaranteed by keeping info
+about each connection in an array and monitoring them (with poll()) for
+activity. If there's any new message to be read from one or more connection,
+then poll() will return and the message is read and dealt with and then a
+for loop, along with a new call to poll(), ensures that every incoming
+message is read and dealt with accordingly.
