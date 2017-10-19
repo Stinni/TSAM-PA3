@@ -1,13 +1,8 @@
-// HTTP Server - Programming Assignment 2 for Computer Networking
+// HTTP Server 2 - Programming Assignment 3 for Computer Networking
+// Built on top of PA2 - HTTP Server
 // University of Reykjavík, autumn 2017
 // Students: Hreiðar Ólafur Arnarsson, Kristinn Heiðar Freysteinsson & Maciej Sierzputowski
 // Usernames: hreidara14, kristinnf13 & maciej15
-
-// Constants:
-#define MAX_MESSAGE_LENGTH  1024
-#define MAX_BACKLOG           10
-#define MAX_CONNECTIONS       65
-#define TIMEOUT            30000
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -25,13 +20,28 @@
 #include <glib/gprintf.h>
 #include <errno.h>
 
+/* Secure socket layer headers */
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
+// Constants:
+#define MAX_MESSAGE_LENGTH  1025
+#define MAX_BACKLOG           10
+#define MAX_CONNECTIONS     1024
+#define TIMEOUT            30000
+
 // A struct to keep info about the connected clients
 typedef struct {
 	char *ip;
 	int port;
 } ClientInfo;
 
-// Function declarations
+// SSL functions
+int OpenListener(int port);
+SSL_CTX* InitServerCTX();
+void LoadCertificates(SSL_CTX* ctx, char* file);
+
+// Functions declarations
 gchar *getCurrentDateTimeAsString();
 gchar *getCurrentDateTimeAsISOString();
 gchar *getPageString(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *data);
@@ -102,12 +112,12 @@ int main(int argc, char *argv[])
 			// If the errno is EINTR (interrupt/signal recieved) we go to the start of the for loop again.
 			if(errno == EINTR) continue;
 			// Not interrupted and nothing we can do. Break for loop and exit the program.
-			perror("poll()");
+			perror("poll() failed");
 			break;
 		}
 		if(r == 0) { // This means that the poll() function timed out
-			if(numOfFds > 1) {
-				for(int i = 1; i < numOfFds; i++) { /* Close all persistent connections. */
+			if(numOfFds > 2) {
+				for(int i = 2; i < numOfFds; i++) { /* Close all persistent connections. */
 					send(pollArray[i].fd, "", 0, 0);
 					shutdown(pollArray[i].fd, SHUT_RDWR);
 					close(pollArray[i].fd);
@@ -115,7 +125,7 @@ int main(int argc, char *argv[])
 					memset(&pollArray[i], 0, sizeof(struct pollfd));
 					memset(&clientArray[i], 0, sizeof(ClientInfo));
 				}
-				numOfFds = 1;
+				numOfFds = 2;
 			}
 			continue;
 		}
@@ -156,7 +166,7 @@ int main(int argc, char *argv[])
 					continue;
 				}
 
-				// 
+				// Making sure that the message string is NULL terminated.
 				message[n] = '\0';
 
 				// This is used for initial connection tests and debugging
@@ -237,6 +247,66 @@ int main(int argc, char *argv[])
 	}
 }
 
+int OpenListener(int port)
+{
+	int sd;
+	struct sockaddr_in addr;
+
+	sd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(port);
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	if(bind(sd, (struct sockaddr*) &addr, (socklen_t) sizeof(addr)) != 0)
+	{
+		perror("Unable to bind port");
+		exit(EXIT_FAILURE);
+	}
+	if(listen(sd, MAX_CONNECTIONS) != 0 ) // A backlog of MAX_CONNECTIONS connections is allowed
+	{
+		perror("Unable to configure listening port");
+		exit(EXIT_FAILURE);
+	}
+	return sd;
+}
+
+SSL_CTX* InitServerCTX()
+{
+	SSL_CTX *ctx;
+
+	/* Initialize OpenSSL */
+	OpenSSL_add_all_algorithms(); /* load & register all cryptos, etc. */
+	SSL_load_error_strings(); /* load the error strings for good error reporting */
+	ctx = SSL_CTX_new(SSLv23_server_method()); /* create new context from method */
+	if(!ctx)
+	{
+		perror("SSL_CTX_new(SSLv23_server_method()) failed");
+		exit(EXIT_FAILURE);
+	}
+	return ctx;
+}
+
+void LoadCertificates(SSL_CTX* ctx, char* file)
+{
+	/* Load server certificate into the SSL context */
+	if(SSL_CTX_use_certificate_file(ctx, file, SSL_FILETYPE_PEM) <= 0) { 
+		perror("SSL_CTX_use_certificate_file() failed");
+		exit(EXIT_FAILURE);
+	}
+
+	/* Load the server private-key into the SSL context */
+	if(SSL_CTX_use_PrivateKey_file(ctx, file, SSL_FILETYPE_PEM) <= 0) {
+		perror("SSL_CTX_use_PrivateKey_file() failed");
+		exit(EXIT_FAILURE);
+	}
+
+	/* verify private key */
+	if(!SSL_CTX_check_private_key(ctx)) {
+		perror("Private key does not match the public certificate\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
 /**
  * The function gets the current date and time, custom formats it and then returns it.
  * It's used for the responses that're sent.
@@ -285,18 +355,21 @@ gchar *getPageString(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPo
  */
 void logRecvMessage(char *clientIP, gchar *clientPort, gchar *reqMethod, gchar *host, gchar *reqURL, gchar *code)
 {
+	gchar *theTime = getCurrentDateTimeAsISOString();
+	gchar *logMsg = g_strconcat(theTime, " : ", clientIP, ":", clientPort, " ", reqMethod, " ", host, reqURL, " : ", code, "\n", NULL);
+
 	FILE *fp;
 	fp = fopen("log.txt", "a");
+
 	if(fp != NULL) {
-		gchar *theTime = getCurrentDateTimeAsISOString();
-		gchar *logMsg = g_strconcat(theTime, " : ", clientIP, ":", clientPort, " ", reqMethod, " ", host, reqURL, " : ", code, "\n", NULL);
 		fwrite(logMsg, sizeof(char), strlen(logMsg), fp);
-		g_free(logMsg);
-		g_free(theTime);
 		fclose(fp);
 	} else {
-		perror("fopen()");
+		perror("fopen() failed");
 	}
+
+	g_free(logMsg);
+	g_free(theTime);
 }
 
 /**
@@ -307,7 +380,7 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
 {
 	gchar *theTime = getCurrentDateTimeAsString();
 	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\n",
-								  "Content-length: 0\r\nServer: TheMagicServer/1.0\r\nConnection: ", NULL);
+								  "Content-length: 0\r\nServer: TheMagicServer/2.0\r\nConnection: ", NULL);
 	gchar *response;
 	if(per) {
 		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", NULL);
@@ -331,7 +404,7 @@ void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *hos
 	gchar *page = getPageString(host, reqURL, clientIP, clientPort, NULL);
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
 	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
-								  contLength, "\r\nServer: TheMagicServer/1.0\r\nConnection: ", NULL);
+								  contLength, "\r\nServer: TheMagicServer/2.0\r\nConnection: ", NULL);
 	gchar *response;
 	if(per) {
 		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL);
@@ -353,7 +426,7 @@ void sendNotFoundResponse(int connfd, char *clientIP, gchar *clientPort, gchar *
 {
 	gchar *theTime = getCurrentDateTimeAsString();
 	gchar *response = g_strconcat("HTTP/1.1 404 Not Found\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\n",
-								  "Content-length: 0\r\nServer: TheMagicServer/1.0\r\nConnection: close\r\n\r\n", NULL);
+								  "Content-length: 0\r\nServer: TheMagicServer/2.0\r\nConnection: close\r\n\r\n", NULL);
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "404");
@@ -370,7 +443,7 @@ void processPostRequest(int connfd, char *clientIP, gchar *clientPort, gchar *ho
 	gchar *page = getPageString(host, reqURL, clientIP, clientPort, data);
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
 	gchar *firstPart = g_strconcat("HTTP/1.1 201 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
-								  contLength, "\r\nServer: TheMagicServer/1.0\r\nConnection: ", NULL);
+								  contLength, "\r\nServer: TheMagicServer/2.0\r\nConnection: ", NULL);
 	gchar *response;
 	if(per) {
 		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL);
@@ -391,7 +464,7 @@ void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, g
 {
 	gchar *theTime = getCurrentDateTimeAsString();
 	gchar *response = g_strconcat("HTTP/1.1 501 Not Implemented\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\n",
-								  "Content-length: 0\r\nServer: TheMagicServer/1.0\r\nConnection: close\r\n\r\n", NULL);
+								  "Content-length: 0\r\nServer: TheMagicServer/2.0\r\nConnection: close\r\n\r\n", NULL);
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "501");
 	g_free(theTime);
