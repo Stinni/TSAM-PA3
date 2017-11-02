@@ -553,3 +553,11 @@ void processColorPageRequests() {
   * According to Piazza server should react to malformed queries with an error instead of crashing.
   * It should send error 405.
   */
+
+/**
+ * Maybe getPageString should take in an extra variable for string?
+ * or... maybe we can just do all the necessary coding in getPageString?
+ * because all queries should be doing is adding or changing the contents of the website
+ * aka the page string, we already send in the requested URL to the function so
+ * it makes sense to have all calls to parsing and building the page logic in there
+ */
