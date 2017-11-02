@@ -494,3 +494,49 @@ void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, g
 void printHashMap(gpointer key, gpointer value, gpointer G_GNUC_UNUSED user_data) {
 	g_printf("The key is \"%s\" and the value is \"%s\"\n", (char *)key, (char *)value);
 }
+
+
+/**
+ * This function processes queries
+ * Checks validity of queries, are queries always on the form ?test=1 or can they
+ * be different?
+ */
+void processQueryRequests() {}
+
+/**
+ * This function takes in query items and creates a page that is displayed client side
+ * when client asks for http://localhost/test with one or more queries
+ * If called with no query then a normal GET request is used
+ */
+
+ // það væri hægt að smíða þetta beint inn í getrequests með tjékki á getURL?
+ // ættu loggarnir líka að taka á queries?
+void processTestPageRequests() {
+
+}
+
+/**
+ * This function is used when client asks for http://localhost/color, it builds the webpage
+ * and returns it to the user based on the value in the bg query.
+ * Additionally, it creates a colour cookie that the server uses to remember last colour
+ * request from the client.
+ */
+void processColorPageRequests() {
+
+} 
+
+/**
+ * Pseudocode
+ * parse url so that we've got what comes after / in http:/localhost/skjfsls
+ * if it is TEST or COLOR we take action otherwise continue with a normal GET request
+ * if it is TEST we parse to see if there are any query parameters (might even do that
+ * beforehand and keep track of it with a true/false variable)
+ * the queries are parsed into a map
+ * we send the query parameters into a function for TEST that creates the necessary body for the page
+ * (might just use it as a return value)
+ * we then build the page as a normal GET request
+ * if the page request is COLOR then we also have a GET request except(!) the page we send back
+ * to client should not have any text on it, only change the style of the body to use the color of
+ * the bg query (or rather, add style="background-color:<value-of-bg>") to <body> even if the value of
+ * bg is not a color (it will just show an empty page with no color)
+ */
