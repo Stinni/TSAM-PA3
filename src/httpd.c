@@ -417,6 +417,13 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
 void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per)
 {
 	gchar *theTime = getCurrentDateTimeAsString();
+	//if color page do below
+	//check if there is a cookie for clientIP and it is not timed out
+	//gchar *page = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body style="background-color:",
+	//bg[0],"></body>\n</html>\n",NULL);
+	//else if test page
+	//gchar *page = getPageString(host, reqURL, clientIP, clientPort, queryData);
+	//else
 	gchar *page = getPageString(host, reqURL, clientIP, clientPort, NULL);
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
 	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
@@ -540,3 +547,9 @@ void processColorPageRequests() {
  * the bg query (or rather, add style="background-color:<value-of-bg>") to <body> even if the value of
  * bg is not a color (it will just show an empty page with no color)
  */
+
+ /**
+  * Can query be on the form ?2001-09-11
+  * According to Piazza server should react to malformed queries with an error instead of crashing.
+  * It should send error 405.
+  */
