@@ -28,7 +28,7 @@
 #define MAX_MESSAGE_LENGTH  1025
 #define MAX_BACKLOG           10
 #define MAX_CONNECTIONS     1024
-#define TIMEOUT            30000
+#define TIMEOUT             6000 // TODO: CHANGE THIS BEFORE HANDIN!!!
 
 // A struct to keep info about the connected clients
 typedef struct {
@@ -116,8 +116,8 @@ int main(int argc, char *argv[])
 			break;
 		}
 		if(r == 0) { // This means that the poll() function timed out
-			if(numOfFds > 2) {
-				for(int i = 2; i < numOfFds; i++) { /* Close all persistent connections. */
+			if(numOfFds > 1) {
+				for(int i = 1; i < numOfFds; i++) { /* Close all persistent connections. */
 					send(pollArray[i].fd, "", 0, 0);
 					shutdown(pollArray[i].fd, SHUT_RDWR);
 					close(pollArray[i].fd);
@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
 					memset(&pollArray[i], 0, sizeof(struct pollfd));
 					memset(&clientArray[i], 0, sizeof(ClientInfo));
 				}
-				numOfFds = 2;
+				numOfFds = 1;
 			}
 			continue;
 		}
@@ -186,6 +186,22 @@ int main(int argc, char *argv[])
 					for(unsigned int q = 4; q < g_strv_length(msgSplit) - 1; q += 3) {
 						g_hash_table_insert(hash, msgSplit[q], msgSplit[q+1]);
 					}
+				}
+
+				char page[100], query[100];
+				memset(page, 0, sizeof(page)); memset(query, 0, sizeof(query));
+				sscanf(msgSplit[1], "/%99[^?]?%99[^\n]", page, query);
+				printf("The requested page is: %s\n", page);
+				if(*query) {
+					gchar **qSplit = g_strsplit_set(query, "&", 0);
+					for(unsigned int j = 0; j < g_strv_length(qSplit); j++) {
+						char tmp1[30]; memset(tmp1, 0, sizeof(tmp1));
+						char tmp2[30]; memset(tmp2, 0, sizeof(tmp2));
+						sscanf(qSplit[j], "%99[^=]=%99[^\n]", tmp1, tmp2);
+						g_printf("query %d is: %s\n", j+1, qSplit[j]);
+						g_printf("second part of that is: %s\n", tmp2);
+					}
+					g_strfreev(qSplit);
 				}
 
 				// For debugging. Iterates through the hash map and prints out each key-value pair
@@ -380,7 +396,7 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
 {
 	gchar *theTime = getCurrentDateTimeAsString();
 	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\n",
-								  "Content-length: 0\r\nServer: TheMagicServer/2.0\r\nConnection: ", NULL);
+								  "Server: TheMagicServer/2.1\r\nConnection: ", NULL);
 	gchar *response;
 	if(per) {
 		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", NULL);
@@ -404,7 +420,7 @@ void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *hos
 	gchar *page = getPageString(host, reqURL, clientIP, clientPort, NULL);
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
 	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
-								  contLength, "\r\nServer: TheMagicServer/2.0\r\nConnection: ", NULL);
+								  contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
 	gchar *response;
 	if(per) {
 		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL);
@@ -426,7 +442,7 @@ void sendNotFoundResponse(int connfd, char *clientIP, gchar *clientPort, gchar *
 {
 	gchar *theTime = getCurrentDateTimeAsString();
 	gchar *response = g_strconcat("HTTP/1.1 404 Not Found\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\n",
-								  "Content-length: 0\r\nServer: TheMagicServer/2.0\r\nConnection: close\r\n\r\n", NULL);
+								  "Content-length: 0\r\nServer: TheMagicServer/2.1\r\nConnection: close\r\n\r\n", NULL);
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "404");
@@ -443,7 +459,7 @@ void processPostRequest(int connfd, char *clientIP, gchar *clientPort, gchar *ho
 	gchar *page = getPageString(host, reqURL, clientIP, clientPort, data);
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
 	gchar *firstPart = g_strconcat("HTTP/1.1 201 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
-								  contLength, "\r\nServer: TheMagicServer/2.0\r\nConnection: ", NULL);
+								  contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
 	gchar *response;
 	if(per) {
 		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL);
@@ -464,7 +480,7 @@ void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, g
 {
 	gchar *theTime = getCurrentDateTimeAsString();
 	gchar *response = g_strconcat("HTTP/1.1 501 Not Implemented\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\n",
-								  "Content-length: 0\r\nServer: TheMagicServer/2.0\r\nConnection: close\r\n\r\n", NULL);
+								  "Content-length: 0\r\nServer: TheMagicServer/2.1\r\nConnection: close\r\n\r\n", NULL);
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "501");
 	g_free(theTime);

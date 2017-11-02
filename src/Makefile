@@ -3,10 +3,8 @@ CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -Wformat=2 $(shell pkg-config glib-2.0 
 
 .DEFAULT: all
 .PHONY: all
-all: httpd
-
-httpd:
-	$(CC) $(CFLAGS) httpd.c -o $@ -lm
+all:
+	$(CC) $(CFLAGS) httpd.c -o httpd -lm
 
 clean:
 	rm -f *.o *~
