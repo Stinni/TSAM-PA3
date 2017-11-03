@@ -417,6 +417,13 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
 void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per)
 {
 	gchar *theTime = getCurrentDateTimeAsString();
+	//if color page do below
+	//check if there is a cookie for clientIP and it is not timed out
+	//gchar *page = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body style="background-color:",
+	//bg[0],"></body>\n</html>\n",NULL);
+	//else if test page
+	//gchar *page = getPageString(host, reqURL, clientIP, clientPort, queryData);
+	//else
 	gchar *page = getPageString(host, reqURL, clientIP, clientPort, NULL);
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
 	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
@@ -494,3 +501,63 @@ void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, g
 void printHashMap(gpointer key, gpointer value, gpointer G_GNUC_UNUSED user_data) {
 	g_printf("The key is \"%s\" and the value is \"%s\"\n", (char *)key, (char *)value);
 }
+
+
+/**
+ * This function processes queries
+ * Checks validity of queries, are queries always on the form ?test=1 or can they
+ * be different?
+ */
+void processQueryRequests() {}
+
+/**
+ * This function takes in query items and creates a page that is displayed client side
+ * when client asks for http://localhost/test with one or more queries
+ * If called with no query then a normal GET request is used
+ */
+
+ // það væri hægt að smíða þetta beint inn í getrequests með tjékki á getURL?
+ // ættu loggarnir líka að taka á queries?
+void processTestPageRequests() {
+
+}
+
+/**
+ * This function is used when client asks for http://localhost/color, it builds the webpage
+ * and returns it to the user based on the value in the bg query.
+ * Additionally, it creates a colour cookie that the server uses to remember last colour
+ * request from the client.
+ */
+void processColorPageRequests() {
+
+} 
+
+/**
+ * Pseudocode
+ * parse url so that we've got what comes after / in http:/localhost/skjfsls
+ * if it is TEST or COLOR we take action otherwise continue with a normal GET request
+ * if it is TEST we parse to see if there are any query parameters (might even do that
+ * beforehand and keep track of it with a true/false variable)
+ * the queries are parsed into a map
+ * we send the query parameters into a function for TEST that creates the necessary body for the page
+ * (might just use it as a return value)
+ * we then build the page as a normal GET request
+ * if the page request is COLOR then we also have a GET request except(!) the page we send back
+ * to client should not have any text on it, only change the style of the body to use the color of
+ * the bg query (or rather, add style="background-color:<value-of-bg>") to <body> even if the value of
+ * bg is not a color (it will just show an empty page with no color)
+ */
+
+ /**
+  * Can query be on the form ?2001-09-11
+  * According to Piazza server should react to malformed queries with an error instead of crashing.
+  * It should send error 405.
+  */
+
+/**
+ * Maybe getPageString should take in an extra variable for string?
+ * or... maybe we can just do all the necessary coding in getPageString?
+ * because all queries should be doing is adding or changing the contents of the website
+ * aka the page string, we already send in the requested URL to the function so
+ * it makes sense to have all calls to parsing and building the page logic in there
+ */
