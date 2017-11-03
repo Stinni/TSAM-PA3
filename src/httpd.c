@@ -191,7 +191,7 @@ int main(int argc, char *argv[])
 				char page[100], query[100];
 				memset(page, 0, sizeof(page)); memset(query, 0, sizeof(query));
 				sscanf(msgSplit[1], "/%99[^?]?%99[^\n]", page, query);
-				printf("The requested page is: %s\n", page);
+				printf("The requested page is: %s\n", *page ? page : "\'/\'");
 				if(*query) {
 					gchar **qSplit = g_strsplit_set(query, "&", 0);
 					for(unsigned int j = 0; j < g_strv_length(qSplit); j++) {
