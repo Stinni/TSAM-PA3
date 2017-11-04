@@ -24,13 +24,18 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-// Constants:
+/* Constants */
 #define MAX_MESSAGE_LENGTH   1025
 #define MAX_BACKLOG            10
 #define MAX_CONNECTIONS      1024
 #define TIMEOUT              6000 // TODO: CHANGE THIS BEFORE HANDIN!!!
 #define MAX_URL_SPLIT_LENGTH  256
 #define MAX_QSPLIT_LENGTH      50
+
+/* Types of GET requests */
+#define NORMAL 0
+#define COLOUR 1
+#define TEST   2
 
 // A struct to keep info about the connected clients
 typedef struct {
@@ -46,7 +51,8 @@ void LoadCertificates(SSL_CTX* ctx, char* file);
 // Functions declarations
 gchar *getCurrentDateTimeAsString();
 gchar *getCurrentDateTimeAsISOString();
-gchar *getPageString(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *data);
+gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *reqQuery, int type);
+gchar *getPageStringForPost(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *postData);
 void logRecvMessage(char *clientIP, gchar *clientPort, gchar *reqMethod, gchar *host, gchar *reqURL, gchar *code);
 void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per);
 void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per);
@@ -331,20 +337,89 @@ gchar *getCurrentDateTimeAsISOString()
 }
 
 /**
- * creates the page needed for GET and POST methods. Data is NULL for a GET request.
+ * Creates the pages needed for the GET method
  */
-gchar *getPageString(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *data)
+gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *reqQuery, int type)
 {
 	gchar *page;
-	gchar *firstPart = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body>\n<p>http://", host, reqURL,
-								   " ", clientIP, ":", clientPort, "</p>\n", NULL);
-	gchar *lastPart = g_strconcat("</body>\n</html>\n", NULL);
-	if(data != NULL) {
-		page = g_strconcat(firstPart, data, "\n", lastPart, NULL);
-	} else {
-		page = g_strconcat(firstPart, lastPart, NULL);
+	gchar *firstPart = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body", NULL);
+
+	if(type) { // Here we create every type of GET page except the 'normal' one
+
+		gchar **qSplit = NULL;
+		if(*reqQuery) {
+			qSplit = g_strsplit_set(reqQuery, "&", 0);
+		}
+
+		if(type == TEST) { // Creating the 'test' page
+			gchar *secondPart = g_strconcat(firstPart, ">\n<p>http://", host, reqURL, " ", clientIP, ":",
+											clientPort, "</p>\n", NULL);
+			gchar *thirdPart;
+			if(qSplit) {
+				gchar *tmp1 = g_strconcat("<dl>\n<dt>The Queries are:</dt>\n", NULL);
+				gchar *tmp2;
+				for(unsigned int i = 0; i < g_strv_length(qSplit); i++) {
+					tmp2 = g_strconcat(tmp1, "<dd>", qSplit[i], "</dd>\n", NULL);
+					g_free(tmp1);
+					tmp1 = tmp2;
+				}
+				thirdPart = g_strconcat(secondPart, tmp1, "</dl>", NULL);
+				g_free(tmp1);
+			}
+			else {
+				thirdPart = g_strconcat(secondPart, "<p>No queries found!</p>\n", NULL);
+			}
+
+			page = g_strconcat(thirdPart, "</body>\n</html>\n", NULL);
+			g_free(secondPart); g_free(thirdPart);
+		}
+		else { // Creating the 'colour' page
+
+			GHashTable *qHash = NULL;
+
+			if(qSplit) {
+				qHash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+				for(unsigned int i = 0; i < g_strv_length(qSplit); i++) {
+					gchar *tmp1 = g_new0(char, MAX_QSPLIT_LENGTH);
+					gchar *tmp2 = g_new0(char, MAX_QSPLIT_LENGTH);
+					sscanf(qSplit[i], "%49[^=]=%49[^\n]", tmp1, tmp2);
+					g_hash_table_insert(qHash, tmp1, tmp2);
+				}
+			}
+
+			gchar *theBg  = g_strdup_printf("%s", (gchar *)g_hash_table_lookup(qHash, "bg"));
+
+			if(theBg) {
+				page = g_strconcat(firstPart, " style=\"background-color:", theBg, "\">\n</body>\n</html>\n", NULL);
+				g_free(theBg);
+			}
+			else {
+				page = g_strconcat(firstPart, ">\n</body>\n</html>\n", NULL);
+			}
+
+			g_hash_table_destroy(qHash);
+		}
+
+		if(qSplit) {
+			g_strfreev(qSplit);
+		}
 	}
-	g_free(firstPart); g_free(lastPart);
+	else { // The only possibility left is that it's the colour page
+		page = g_strconcat(firstPart, ">\n<p>http://", host, reqURL, " ", clientIP, ":", clientPort, "</p>\n",
+						   "</body>\n</html>\n", NULL);
+	}
+
+	g_free(firstPart);
+	return page;
+}
+
+/**
+ * Creates the page needed for POST method
+ */
+gchar *getPageStringForPost(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *postData)
+{
+	gchar *page = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body>\n<p>http://", host, reqURL, " ",
+							  clientIP, ":", clientPort, "</p>\n", postData, "\n", "</body>\n</html>\n", NULL);
 	return page;
 }
 
@@ -400,82 +475,45 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
  */
 void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per)
 {
-	//(connfd, *clientIP, *clientPort, *host(hostSplit[0]), *reqMethod(msgSplit[0]), *reqURL(msgSplit[1]), per)
-
+	gchar *page;
 	gchar *reqPage  = g_new0(char, MAX_URL_SPLIT_LENGTH);
 	gchar *reqQuery = g_new0(char, MAX_URL_SPLIT_LENGTH);
 	sscanf(reqURL, "%255[^?]?%255[^\n]", reqPage, reqQuery);
 
 	if(!g_strcmp0(reqPage, "/") || !g_strcmp0(reqPage, "/index.html")) {
-
-		gchar *theTime = getCurrentDateTimeAsString();
+		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, NORMAL);
+	}
+	else if(!g_strcmp0(reqPage, "/color")  || !g_strcmp0(reqPage, "/colour") ||  // supporting both English and the simplified
+			!g_strcmp0(reqPage, "/color/") || !g_strcmp0(reqPage, "/colour/")) { // English versions of the word colour.
+		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, COLOUR);
 		//if color page do below
 		//check if there is a cookie for clientIP and it is not timed out
 		//gchar *page = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body style="background-color:",
 		//bg[0],"></body>\n</html>\n",NULL);
-		//else if test page
-		//gchar *page = getPageString(host, reqURL, clientIP, clientPort, queryData);
-		//else
-		gchar *page = getPageString(host, reqURL, clientIP, clientPort, NULL);
-		gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
-		gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
-									  contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
-		gchar *response;
-		if(per) {
-			response = g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL);
-		}
-		else {
-			response = g_strconcat(firstPart, "close\r\n\r\n", page, NULL);
-		}
-
-		send(connfd, response, strlen(response), 0);
-		logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "200");
-		g_free(theTime); g_free(page); g_free(contLength); g_free(firstPart); g_free(response);
-
-	}
-	else if(!g_strcmp0(reqPage, "/color")  || !g_strcmp0(reqPage, "/colour") ||  // supporting both English and the simplified
-			!g_strcmp0(reqPage, "/color/") || !g_strcmp0(reqPage, "/colour/")) { // English versions of the word colour.
-
 	}
 	else if(!g_strcmp0(reqPage, "/test") || !g_strcmp0(reqPage, "/test/")) {
-
+		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, TEST);
+		//else if test page
+		//gchar *page = getPageStringForGet(host, reqURL, clientIP, clientPort, queryData, TEST);
 	}
 	else {
+		g_free(reqPage); g_free(reqQuery);
 		sendNotFoundResponse(connfd, clientIP, clientPort, host, reqMethod, reqURL);
+		return;
 	}
 
-	/* No need to create a new GHashTable unless we have a query string to insert into it */
-	GHashTable *qHash = NULL;
+	gchar *theTime = getCurrentDateTimeAsString();
+	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
+	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
+							contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
 
-	if(*reqQuery) {
-		/* We initialize the hash table here since we have at least one query */
-		qHash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-		gchar **qSplit = g_strsplit_set(reqQuery, "&", 0);
+	gchar *response = per ? g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL) :
+							g_strconcat(firstPart, "close\r\n\r\n", page, NULL);
 
-		for(unsigned int i = 0; i < g_strv_length(qSplit); i++) {
-			gchar *tmp1 = g_new0(char, MAX_QSPLIT_LENGTH);
-			g_printf("The size of tmp1 is: %d\n", (int)sizeof(tmp1));
-			gchar *tmp2 = g_new0(char, MAX_QSPLIT_LENGTH);
-			sscanf(qSplit[i], "%49[^=]=%49[^\n]", tmp1, tmp2);
-			g_hash_table_insert(qHash, tmp1, tmp2);
-		}
-		g_strfreev(qSplit);
-	}
-
-	g_printf("The reqPage is: %s\n", reqPage);
+	send(connfd, response, strlen(response), 0);
+	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "200");
+	g_free(theTime); g_free(page); g_free(contLength); g_free(firstPart); g_free(response);
 	g_free(reqPage); g_free(reqQuery);
-	g_printf("Now lets see what the qHash map has:\n");
-	if(qHash) {
-		g_hash_table_foreach(qHash, (GHFunc)printHashMap, NULL);
-	}
-	else {
-		g_printf("NULL - it has NULL :( \n");
-	}
-
-	if(qHash) {
-		g_hash_table_destroy(qHash);
-	}
-
 }
 
 /**
@@ -500,7 +538,7 @@ void sendNotFoundResponse(int connfd, char *clientIP, gchar *clientPort, gchar *
 void processPostRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, gchar *data, int per)
 {
 	gchar *theTime = getCurrentDateTimeAsString();
-	gchar *page = getPageString(host, reqURL, clientIP, clientPort, data);
+	gchar *page = getPageStringForPost(host, reqURL, clientIP, clientPort, data);
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
 	gchar *firstPart = g_strconcat("HTTP/1.1 201 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
 								  contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
