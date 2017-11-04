@@ -408,6 +408,30 @@ void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *hos
 
 	if(!g_strcmp0(reqPage, "/") || !g_strcmp0(reqPage, "/index.html")) {
 
+		gchar *theTime = getCurrentDateTimeAsString();
+		//if color page do below
+		//check if there is a cookie for clientIP and it is not timed out
+		//gchar *page = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body style="background-color:",
+		//bg[0],"></body>\n</html>\n",NULL);
+		//else if test page
+		//gchar *page = getPageString(host, reqURL, clientIP, clientPort, queryData);
+		//else
+		gchar *page = getPageString(host, reqURL, clientIP, clientPort, NULL);
+		gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
+		gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
+									  contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
+		gchar *response;
+		if(per) {
+			response = g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL);
+		}
+		else {
+			response = g_strconcat(firstPart, "close\r\n\r\n", page, NULL);
+		}
+
+		send(connfd, response, strlen(response), 0);
+		logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "200");
+		g_free(theTime); g_free(page); g_free(contLength); g_free(firstPart); g_free(response);
+
 	}
 	else if(!g_strcmp0(reqPage, "/color")  || !g_strcmp0(reqPage, "/colour") ||  // supporting both English and the simplified
 			!g_strcmp0(reqPage, "/color/") || !g_strcmp0(reqPage, "/colour/")) { // English versions of the word colour.
@@ -420,7 +444,6 @@ void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *hos
 		sendNotFoundResponse(connfd, clientIP, clientPort, host, reqMethod, reqURL);
 	}
 
-	//g_printf("In processGetRequest function, reqPage is: %s\n", reqPage);
 	/* No need to create a new GHashTable unless we have a query string to insert into it */
 	GHashTable *qHash = NULL;
 
@@ -453,29 +476,6 @@ void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *hos
 		g_hash_table_destroy(qHash);
 	}
 
-	gchar *theTime = getCurrentDateTimeAsString();
-	//if color page do below
-	//check if there is a cookie for clientIP and it is not timed out
-	//gchar *page = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body style="background-color:",
-	//bg[0],"></body>\n</html>\n",NULL);
-	//else if test page
-	//gchar *page = getPageString(host, reqURL, clientIP, clientPort, queryData);
-	//else
-	gchar *page = getPageString(host, reqURL, clientIP, clientPort, NULL);
-	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
-	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
-								  contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
-	gchar *response;
-	if(per) {
-		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL);
-	}
-	else {
-		response = g_strconcat(firstPart, "close\r\n\r\n", page, NULL);
-	}
-
-	send(connfd, response, strlen(response), 0);
-	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "200");
-	g_free(theTime); g_free(page); g_free(contLength); g_free(firstPart); g_free(response);
 }
 
 /**
