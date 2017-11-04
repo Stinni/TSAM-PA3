@@ -25,10 +25,12 @@
 #include <openssl/err.h>
 
 // Constants:
-#define MAX_MESSAGE_LENGTH  1025
-#define MAX_BACKLOG           10
-#define MAX_CONNECTIONS     1024
-#define TIMEOUT             6000 // TODO: CHANGE THIS BEFORE HANDIN!!!
+#define MAX_MESSAGE_LENGTH   1025
+#define MAX_BACKLOG            10
+#define MAX_CONNECTIONS      1024
+#define TIMEOUT              6000 // TODO: CHANGE THIS BEFORE HANDIN!!!
+#define MAX_URL_SPLIT_LENGTH  256
+#define MAX_QSPLIT_LENGTH      50
 
 // A struct to keep info about the connected clients
 typedef struct {
@@ -59,6 +61,9 @@ int main(int argc, char *argv[])
 		g_printf("Format expected is .src/httpd <port_number>\n");
 		exit(EXIT_SUCCESS);
 	}
+	if(argc < 3) {
+		// TODO: Do something here to figure out a port for the SSL connection
+	}
 
 	gchar message[MAX_MESSAGE_LENGTH];
 	memset(message, 0, sizeof(message));
@@ -88,7 +93,7 @@ int main(int argc, char *argv[])
 	pollArray[0].events = POLLIN;
 
 	// Setting up structs to keep info about connected clients
-	// Note that the size of clientArray is MAX_CONNECTIONS (and not MAX_CONNECTIONS-1) for simplicity
+	// Note that the size of clientArray is MAX_CONNECTIONS (and not MAX_CONNECTIONS - 1) for simplicity
 	ClientInfo clientArray[MAX_CONNECTIONS];
 	memset(clientArray, 0, sizeof(clientArray));
 
@@ -180,28 +185,13 @@ int main(int argc, char *argv[])
 				gchar *httpVersion = g_strrstr(message, "HTTP");
 
 				GHashTable *hash = g_hash_table_new(g_str_hash, g_str_equal);
-				/* We deduct 1 from g_strv_length because we count from 0 */
-				/* And we add 3 each time because there're empty strings in between each pair */
+
 				if(msgSplit != NULL) {
+					/* We deduct 1 from g_strv_length because we count from 0 */
+					/* And we add 3 each time because there're empty strings in between each pair */
 					for(unsigned int q = 4; q < g_strv_length(msgSplit) - 1; q += 3) {
 						g_hash_table_insert(hash, msgSplit[q], msgSplit[q+1]);
 					}
-				}
-
-				char page[100], query[100];
-				memset(page, 0, sizeof(page)); memset(query, 0, sizeof(query));
-				sscanf(msgSplit[1], "/%99[^?]?%99[^\n]", page, query);
-				printf("The requested page is: %s\n", *page ? page : "\'/\'");
-				if(*query) {
-					gchar **qSplit = g_strsplit_set(query, "&", 0);
-					for(unsigned int j = 0; j < g_strv_length(qSplit); j++) {
-						char tmp1[30]; memset(tmp1, 0, sizeof(tmp1));
-						char tmp2[30]; memset(tmp2, 0, sizeof(tmp2));
-						sscanf(qSplit[j], "%99[^=]=%99[^\n]", tmp1, tmp2);
-						g_printf("query %d is: %s\n", j+1, qSplit[j]);
-						g_printf("second part of that is: %s\n", tmp2);
-					}
-					g_strfreev(qSplit);
 				}
 
 				// For debugging. Iterates through the hash map and prints out each key-value pair
@@ -228,14 +218,8 @@ int main(int argc, char *argv[])
 									 msgSplit[1], persistent);
 				}
 				else if(g_str_has_prefix(message, "GET")) { // Working with GET requests
-					if(!g_strcmp0(msgSplit[1], "/") || !g_strcmp0(msgSplit[1], "/index.html")) {
-						processGetRequest(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], msgSplit[0],
-										  msgSplit[1], persistent);
-					}
-					else {
-						sendNotFoundResponse(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], msgSplit[0],
-											 msgSplit[1]);
-					}
+					processGetRequest(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], msgSplit[0],
+									  msgSplit[1], persistent);
 				}
 				else if(g_str_has_prefix(message, "POST")) { // Working with POST requests
 					processPostRequest(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], msgSplit[0],
@@ -416,6 +400,59 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
  */
 void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per)
 {
+	//(connfd, *clientIP, *clientPort, *host(hostSplit[0]), *reqMethod(msgSplit[0]), *reqURL(msgSplit[1]), per)
+
+	gchar *reqPage  = g_new0(char, MAX_URL_SPLIT_LENGTH);
+	gchar *reqQuery = g_new0(char, MAX_URL_SPLIT_LENGTH);
+	sscanf(reqURL, "%255[^?]?%255[^\n]", reqPage, reqQuery);
+
+	if(!g_strcmp0(reqPage, "/") || !g_strcmp0(reqPage, "/index.html")) {
+
+	}
+	else if(!g_strcmp0(reqPage, "/color")  || !g_strcmp0(reqPage, "/colour") ||  // supporting both English and the simplified
+			!g_strcmp0(reqPage, "/color/") || !g_strcmp0(reqPage, "/colour/")) { // English versions of the word colour.
+
+	}
+	else if(!g_strcmp0(reqPage, "/test") || !g_strcmp0(reqPage, "/test/")) {
+
+	}
+	else {
+		sendNotFoundResponse(connfd, clientIP, clientPort, host, reqMethod, reqURL);
+	}
+
+	//g_printf("In processGetRequest function, reqPage is: %s\n", reqPage);
+	/* No need to create a new GHashTable unless we have a query string to insert into it */
+	GHashTable *qHash = NULL;
+
+	if(*reqQuery) {
+		/* We initialize the hash table here since we have at least one query */
+		qHash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+		gchar **qSplit = g_strsplit_set(reqQuery, "&", 0);
+
+		for(unsigned int i = 0; i < g_strv_length(qSplit); i++) {
+			gchar *tmp1 = g_new0(char, MAX_QSPLIT_LENGTH);
+			g_printf("The size of tmp1 is: %d\n", (int)sizeof(tmp1));
+			gchar *tmp2 = g_new0(char, MAX_QSPLIT_LENGTH);
+			sscanf(qSplit[i], "%49[^=]=%49[^\n]", tmp1, tmp2);
+			g_hash_table_insert(qHash, tmp1, tmp2);
+		}
+		g_strfreev(qSplit);
+	}
+
+	g_printf("The reqPage is: %s\n", reqPage);
+	g_free(reqPage); g_free(reqQuery);
+	g_printf("Now lets see what the qHash map has:\n");
+	if(qHash) {
+		g_hash_table_foreach(qHash, (GHFunc)printHashMap, NULL);
+	}
+	else {
+		g_printf("NULL - it has NULL :( \n");
+	}
+
+	if(qHash) {
+		g_hash_table_destroy(qHash);
+	}
+
 	gchar *theTime = getCurrentDateTimeAsString();
 	//if color page do below
 	//check if there is a cookie for clientIP and it is not timed out
