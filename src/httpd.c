@@ -25,12 +25,12 @@
 #include <openssl/err.h>
 
 /* Constants */
-#define MAX_MESSAGE_LENGTH   1025
-#define MAX_BACKLOG            10
-#define MAX_CONNECTIONS      1024
-#define TIMEOUT              6000 // TODO: CHANGE THIS BEFORE HANDIN!!!
-#define MAX_URL_SPLIT_LENGTH  256
-#define MAX_QSPLIT_LENGTH      50
+#define MAX_MESSAGE_LENGTH    1025
+#define MAX_BACKLOG             10
+#define MAX_CONNECTIONS       1024
+#define TIMEOUT              30000
+#define MAX_URL_SPLIT_LENGTH   256
+#define MAX_QSPLIT_LENGTH       50
 
 /* Types of GET requests */
 #define NORMAL 0
@@ -363,7 +363,7 @@ gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *cl
 					g_free(tmp1);
 					tmp1 = tmp2;
 				}
-				thirdPart = g_strconcat(secondPart, tmp1, "</dl>", NULL);
+				thirdPart = g_strconcat(secondPart, tmp1, "</dl>\n", NULL);
 				g_free(tmp1);
 			}
 			else {
@@ -385,9 +385,17 @@ gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *cl
 					sscanf(qSplit[i], "%49[^=]=%49[^\n]", tmp1, tmp2);
 					g_hash_table_insert(qHash, tmp1, tmp2);
 				}
+				g_strfreev(qSplit);
 			}
 
-			gchar *theBg  = g_strdup_printf("%s", (gchar *)g_hash_table_lookup(qHash, "bg"));
+			gchar *theBg = NULL;
+			if(qHash) {
+				gchar *tmp = (gchar *)g_hash_table_lookup(qHash, "bg");
+				if(tmp) {
+					theBg = g_strdup_printf("%s", tmp);
+				}
+				g_hash_table_destroy(qHash);
+			}
 
 			if(theBg) {
 				page = g_strconcat(firstPart, " style=\"background-color:", theBg, "\">\n</body>\n</html>\n", NULL);
@@ -396,12 +404,6 @@ gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *cl
 			else {
 				page = g_strconcat(firstPart, ">\n</body>\n</html>\n", NULL);
 			}
-
-			g_hash_table_destroy(qHash);
-		}
-
-		if(qSplit) {
-			g_strfreev(qSplit);
 		}
 	}
 	else { // The only possibility left is that it's the colour page
@@ -486,15 +488,9 @@ void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *hos
 	else if(!g_strcmp0(reqPage, "/color")  || !g_strcmp0(reqPage, "/colour") ||  // supporting both English and the simplified
 			!g_strcmp0(reqPage, "/color/") || !g_strcmp0(reqPage, "/colour/")) { // English versions of the word colour.
 		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, COLOUR);
-		//if color page do below
-		//check if there is a cookie for clientIP and it is not timed out
-		//gchar *page = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body style="background-color:",
-		//bg[0],"></body>\n</html>\n",NULL);
 	}
 	else if(!g_strcmp0(reqPage, "/test") || !g_strcmp0(reqPage, "/test/")) {
 		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, TEST);
-		//else if test page
-		//gchar *page = getPageStringForGet(host, reqURL, clientIP, clientPort, queryData, TEST);
 	}
 	else {
 		g_free(reqPage); g_free(reqQuery);
