@@ -458,13 +458,8 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
 	gchar *theTime = getCurrentDateTimeAsString();
 	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\n",
 								  "Server: TheMagicServer/2.1\r\nConnection: ", NULL);
-	gchar *response;
-	if(per) {
-		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", NULL);
-	}
-	else {
-		response = g_strconcat(firstPart, "close\r\n\r\n", NULL);
-	}
+	gchar *response = per ? g_strconcat(firstPart, "keep-alive\r\n\r\n", NULL) :
+							g_strconcat(firstPart, "close\r\n\r\n", NULL);
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "200");
@@ -538,13 +533,8 @@ void processPostRequest(int connfd, char *clientIP, gchar *clientPort, gchar *ho
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
 	gchar *firstPart = g_strconcat("HTTP/1.1 201 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
 								  contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
-	gchar *response;
-	if(per) {
-		response = g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL);
-	}
-	else {
-		response = g_strconcat(firstPart, "close\r\n\r\n", page, NULL);
-	}
+	gchar *response = per ? g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL) :
+							g_strconcat(firstPart, "close\r\n\r\n", page, NULL);
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "201");
@@ -561,8 +551,7 @@ void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, g
 								  "Content-length: 0\r\nServer: TheMagicServer/2.1\r\nConnection: close\r\n\r\n", NULL);
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "501");
-	g_free(theTime);
-	g_free(response);
+	g_free(response); g_free(theTime);
 }
 
 /**
