@@ -25,12 +25,14 @@
 #include <openssl/err.h>
 
 /* Constants */
-#define MAX_MESSAGE_LENGTH    1025
-#define MAX_BACKLOG             10
-#define MAX_CONNECTIONS       1024
-#define TIMEOUT              30000
-#define MAX_URL_SPLIT_LENGTH   256
-#define MAX_QSPLIT_LENGTH       50
+#define MAX_MESSAGE_LENGTH     1025
+#define MAX_BACKLOG              10
+#define MAX_CONNECTIONS        1024
+#define TIMEOUT               30000
+#define MAX_URL_SPLIT_LENGTH    256
+#define MAX_HSPLIT_KEY_LENGTH    64
+#define MAX_HSPLIT_VAL_LENGTH   256
+#define MAX_QSPLIT_LENGTH        50
 
 /* Types of GET requests */
 #define NORMAL 0
@@ -51,14 +53,15 @@ void LoadCertificates(SSL_CTX* ctx, char* file);
 // Functions declarations
 gchar *getCurrentDateTimeAsString();
 gchar *getCurrentDateTimeAsISOString();
-gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *reqQuery, int type);
+gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *reqQuery, gchar *colour, int type);
 gchar *getPageStringForPost(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *postData);
 void logRecvMessage(char *clientIP, gchar *clientPort, gchar *reqMethod, gchar *host, gchar *reqURL, gchar *code);
 void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per);
-void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per);
+void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, gchar *cookies, int per);
 void sendNotFoundResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL);
 void processPostRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, gchar *data, int per);
 void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL);
+void freeHashMap(gpointer key, gpointer value, gpointer user_data);
 void printHashMap(gpointer key, gpointer value, gpointer user_data);
 
 int main(int argc, char *argv[])
@@ -185,59 +188,67 @@ int main(int argc, char *argv[])
 				/*for(unsigned int i = 0; i < n; i++) g_printf("%hhx ", message[i]);
 				g_printf("\n");*/
 
-				gchar *msgBody     = g_strrstr(message, "\r\n\r\n\0");
+				gchar *msgBody         = g_strrstr(message, "\r\n\r\n");
 				msgBody[0] = 0; msgBody += 4;
-				gchar **msgSplit   = g_strsplit_set(message, " \r\n", 0);
-				gchar *httpVersion = g_strrstr(message, "HTTP");
+				gchar **msgSplit       = g_strsplit_set(message, "\r\n", 0);
+				gchar **firstLineSplit = g_strsplit_set(msgSplit[0], " ", 0);
+				GHashTable *hash       = g_hash_table_new(g_str_hash, g_str_equal);
 
-				GHashTable *hash = g_hash_table_new(g_str_hash, g_str_equal);
-
-				if(msgSplit != NULL) {
-					/* We deduct 1 from g_strv_length because we count from 0 */
-					/* And we add 3 each time because there're empty strings in between each pair */
-					for(unsigned int q = 4; q < g_strv_length(msgSplit) - 1; q += 3) {
-						g_hash_table_insert(hash, msgSplit[q], msgSplit[q+1]);
-					}
+				/* We add 2 each time because there's an empty string between each pair */
+				for(unsigned int q = 2; q < g_strv_length(msgSplit); q += 2) {
+					gchar *tmp1 = g_new0(char, MAX_HSPLIT_KEY_LENGTH);
+					gchar *tmp2 = g_new0(char, MAX_HSPLIT_VAL_LENGTH);
+					sscanf(msgSplit[q], "%63[^: ]: %255[^\n]", tmp1, tmp2);
+					g_hash_table_insert(hash, tmp1, tmp2);
 				}
 
 				// For debugging. Iterates through the hash map and prints out each key-value pair
 				//g_hash_table_foreach(hash, (GHFunc)printHashMap, NULL);
 
-				gchar *clientPort = g_strdup_printf("%i", clientArray[i].port);
-				gchar *hostField  = g_strdup_printf("%s", (gchar *)g_hash_table_lookup(hash, "Host:"));
-				gchar **hostSplit = g_strsplit_set(hostField, ":", 0);
-				gchar *connField  = g_strdup_printf("%s", (gchar *)g_hash_table_lookup(hash, "Connection:"));
+				gchar *clientPort  = g_strdup_printf("%i", clientArray[i].port);
+				gchar *hostField   = g_strdup_printf("%s", (gchar *)g_hash_table_lookup(hash, "Host"));
+				gchar **hostSplit  = g_strsplit_set(hostField, ":", 0);
+				gchar *connField   = g_strdup_printf("%s", (gchar *)g_hash_table_lookup(hash, "Connection"));
+				gchar *cookieField = (gchar *)g_hash_table_lookup(hash, "Cookie");
+				gchar *cookies     = NULL;
+				if(cookieField) {
+					cookies = g_strdup_printf("%s", cookieField);
+				}
 
 				int persistent = 0;
-				if(g_str_has_prefix(httpVersion, "HTTP/1.0") && g_str_has_prefix(connField, "keep-alive")) {
+				if(g_str_has_prefix(firstLineSplit[2], "HTTP/1.0") && g_str_has_prefix(connField, "keep-alive")) {
 					persistent = 1;
 				}
-				else if(g_str_has_prefix(httpVersion, "HTTP/1.1") && !g_str_has_prefix(connField, "close")) {
+				else if(g_str_has_prefix(firstLineSplit[2], "HTTP/1.1") && !g_str_has_prefix(connField, "close")) {
 					persistent = 1;
 				}
-				else if(g_str_has_prefix(httpVersion, "HTTP/2")) {
+				else if(g_str_has_prefix(firstLineSplit[2], "HTTP/2")) {
 					persistent = 1;
 				}
 
 				if(g_str_has_prefix(message, "HEAD")) { // Working with HEAD requests
-					sendHeadResponse(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], msgSplit[0],
-									 msgSplit[1], persistent);
+					sendHeadResponse(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], firstLineSplit[0],
+									 firstLineSplit[1], persistent);
 				}
 				else if(g_str_has_prefix(message, "GET")) { // Working with GET requests
-					processGetRequest(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], msgSplit[0],
-									  msgSplit[1], persistent);
+					processGetRequest(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], firstLineSplit[0],
+									  firstLineSplit[1], cookies, persistent);
 				}
 				else if(g_str_has_prefix(message, "POST")) { // Working with POST requests
-					processPostRequest(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], msgSplit[0],
-									   msgSplit[1], msgBody, persistent);
+					processPostRequest(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0], firstLineSplit[0],
+									   firstLineSplit[1], msgBody, persistent);
 				}
 				else { // Working with any other (Not implemented/supported) requests
 					sendNotImplementedResponce(pollArray[i].fd, clientArray[i].ip, clientPort, hostSplit[0],
-											   msgSplit[0], msgSplit[1]);
+											   firstLineSplit[0], firstLineSplit[1]);
 				}
 
+				if(cookies) g_free(cookies);
 				g_free(clientPort); g_free(hostField); g_free(connField);
-				g_strfreev(msgSplit); g_strfreev(hostSplit);
+				if(msgSplit) g_strfreev(msgSplit);
+				g_strfreev(firstLineSplit);
+				g_strfreev(hostSplit);
+				g_hash_table_foreach(hash, (GHFunc)freeHashMap, NULL);
 				g_hash_table_destroy(hash);
 				memset(message, 0, sizeof(message));
 
@@ -339,22 +350,21 @@ gchar *getCurrentDateTimeAsISOString()
 /**
  * Creates the pages needed for the GET method
  */
-gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *reqQuery, int type)
+gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *clientPort, gchar *reqQuery, gchar *colour, int type)
 {
 	gchar *page;
 	gchar *firstPart = g_strconcat("<!DOCTYPE html>\n<html>\n<head>\n</head>\n<body", NULL);
 
 	if(type) { // Here we create every type of GET page except the 'normal' one
-
-		gchar **qSplit = NULL;
-		if(*reqQuery) {
-			qSplit = g_strsplit_set(reqQuery, "&", 0);
-		}
-
 		if(type == TEST) { // Creating the 'test' page
 			gchar *secondPart = g_strconcat(firstPart, ">\n<p>http://", host, reqURL, " ", clientIP, ":",
 											clientPort, "</p>\n", NULL);
 			gchar *thirdPart;
+
+			gchar **qSplit = NULL;
+			if(*reqQuery) {
+				qSplit = g_strsplit_set(reqQuery, "&", 0);
+			}
 			if(qSplit) {
 				gchar *tmp1 = g_strconcat("<dl>\n<dt>The Queries are:</dt>\n", NULL);
 				gchar *tmp2;
@@ -365,6 +375,7 @@ gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *cl
 				}
 				thirdPart = g_strconcat(secondPart, tmp1, "</dl>\n", NULL);
 				g_free(tmp1);
+				g_strfreev(qSplit);
 			}
 			else {
 				thirdPart = g_strconcat(secondPart, "<p>No queries found!</p>\n", NULL);
@@ -374,39 +385,15 @@ gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *cl
 			g_free(secondPart); g_free(thirdPart);
 		}
 		else { // Creating the 'colour' page
-
-			GHashTable *qHash = NULL;
-
-			if(qSplit) {
-				qHash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-				for(unsigned int i = 0; i < g_strv_length(qSplit); i++) {
-					gchar *tmp1 = g_new0(char, MAX_QSPLIT_LENGTH);
-					gchar *tmp2 = g_new0(char, MAX_QSPLIT_LENGTH);
-					sscanf(qSplit[i], "%49[^=]=%49[^\n]", tmp1, tmp2);
-					g_hash_table_insert(qHash, tmp1, tmp2);
-				}
-				g_strfreev(qSplit);
-			}
-
-			gchar *theBg = NULL;
-			if(qHash) {
-				gchar *tmp = (gchar *)g_hash_table_lookup(qHash, "bg");
-				if(tmp) {
-					theBg = g_strdup_printf("%s", tmp);
-				}
-				g_hash_table_destroy(qHash);
-			}
-
-			if(theBg) {
-				page = g_strconcat(firstPart, " style=\"background-color:", theBg, "\">\n</body>\n</html>\n", NULL);
-				g_free(theBg);
+			if(colour) {
+				page = g_strconcat(firstPart, " style=\"background-color:", colour, "\">\n</body>\n</html>\n", NULL);
 			}
 			else {
 				page = g_strconcat(firstPart, ">\n</body>\n</html>\n", NULL);
 			}
 		}
 	}
-	else { // The only possibility left is that it's the colour page
+	else { // The only possibility left is that it's the 'normal' page
 		page = g_strconcat(firstPart, ">\n<p>http://", host, reqURL, " ", clientIP, ":", clientPort, "</p>\n",
 						   "</body>\n</html>\n", NULL);
 	}
@@ -470,22 +457,64 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
  * This function structures a response if a client sends
  * a GET request and then sends the response to the client.
  */
-void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, int per)
+void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *host, gchar *reqMethod, gchar *reqURL, gchar *cookies, int per)
 {
 	gchar *page;
 	gchar *reqPage  = g_new0(char, MAX_URL_SPLIT_LENGTH);
 	gchar *reqQuery = g_new0(char, MAX_URL_SPLIT_LENGTH);
 	sscanf(reqURL, "%255[^?]?%255[^\n]", reqPage, reqQuery);
 
+	gchar *theBg = NULL;
+
 	if(!g_strcmp0(reqPage, "/") || !g_strcmp0(reqPage, "/index.html")) {
-		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, NORMAL);
+		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, NULL, NORMAL);
 	}
 	else if(!g_strcmp0(reqPage, "/color")  || !g_strcmp0(reqPage, "/colour") ||  // supporting both English and the simplified
-			!g_strcmp0(reqPage, "/color/") || !g_strcmp0(reqPage, "/colour/")) { // English versions of the word colour.
-		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, COLOUR);
+			!g_strcmp0(reqPage, "/color/") || !g_strcmp0(reqPage, "/colour/")) { // English versions of the word 'colour'
+
+		gchar **qSplit = NULL;
+		if(*reqQuery) {
+			qSplit = g_strsplit_set(reqQuery, "&", 0);
+		}
+
+		GHashTable *qHash = NULL;
+
+		if(cookies) {
+			gchar **cookieSplit = g_strsplit_set(cookies, "; ", 0);
+			qHash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+			for(unsigned int i = 0; i < g_strv_length(cookieSplit); i += 2) {
+				gchar *tmp1 = g_new0(char, MAX_QSPLIT_LENGTH);
+				gchar *tmp2 = g_new0(char, MAX_QSPLIT_LENGTH);
+				sscanf(cookieSplit[i], "%49[^=]=%49[^\n]", tmp1, tmp2);
+				g_hash_table_insert(qHash, tmp1, tmp2);
+			}
+			g_strfreev(cookieSplit);
+		}
+
+		if(qSplit) {
+			if(!qHash) qHash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+			for(unsigned int i = 0; i < g_strv_length(qSplit); i++) {
+				gchar *tmp1 = g_new0(char, MAX_QSPLIT_LENGTH);
+				gchar *tmp2 = g_new0(char, MAX_QSPLIT_LENGTH);
+				sscanf(qSplit[i], "%49[^=]=%49[^\n]", tmp1, tmp2);
+				g_hash_table_insert(qHash, tmp1, tmp2);
+			}
+			g_strfreev(qSplit);
+		}
+
+		
+		if(qHash) {
+			gchar *tmp = (gchar *)g_hash_table_lookup(qHash, "bg");
+			if(tmp) {
+				theBg = g_strdup_printf("%s", tmp);
+			}
+			g_hash_table_destroy(qHash);
+		}
+
+		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, theBg, COLOUR);
 	}
 	else if(!g_strcmp0(reqPage, "/test") || !g_strcmp0(reqPage, "/test/")) {
-		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, TEST);
+		page = getPageStringForGet(host, reqURL, clientIP, clientPort, reqQuery, NULL, TEST);
 	}
 	else {
 		g_free(reqPage); g_free(reqQuery);
@@ -493,18 +522,27 @@ void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *hos
 		return;
 	}
 
-	gchar *theTime = getCurrentDateTimeAsString();
+	gchar *theTime    = getCurrentDateTimeAsString();
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
-	gchar *firstPart = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
-							contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
+	gchar *firstPart  = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
+									contLength, "\r\nServer: TheMagicServer/2.1\r\n", NULL);
 
-	gchar *response = per ? g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL) :
-							g_strconcat(firstPart, "close\r\n\r\n", page, NULL);
+	if(theBg) {
+		g_printf("theBg is: %s\n", theBg);
+		gchar *updateFirstPart = g_strconcat(firstPart, "Set-Cookie: bg=", theBg, "; Path=/colour\r\n",
+											 "Set-Cookie: bg=", theBg, "; Path=/color\r\n", NULL);
+		g_free(firstPart);
+		firstPart = updateFirstPart;
+	}
+
+	gchar *response = per ? g_strconcat(firstPart, "Connection: keep-alive\r\n\r\n", page, NULL) :
+							g_strconcat(firstPart, "Connection: close\r\n\r\n", page, NULL);
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "200");
 	g_free(theTime); g_free(page); g_free(contLength); g_free(firstPart); g_free(response);
 	g_free(reqPage); g_free(reqQuery);
+	if(theBg) g_free(theBg);
 }
 
 /**
@@ -555,10 +593,21 @@ void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, g
 }
 
 /**
+ * This function is used to free all the strings used for the
+ * hashmap that contains all the header fields and values
+ */
+void freeHashMap(gpointer key, gpointer value, gpointer G_GNUC_UNUSED user_data)
+{
+	g_free(key);
+	g_free(value);
+}
+
+/**
  * This function is used to help with debugging. It's passed as a GHFunc to the
  * g_hash_table_foreach function and prints out each (key, value) in a hash map
  */
-void printHashMap(gpointer key, gpointer value, gpointer G_GNUC_UNUSED user_data) {
+void printHashMap(gpointer key, gpointer value, gpointer G_GNUC_UNUSED user_data)
+{
 	g_printf("The key is \"%s\" and the value is \"%s\"\n", (char *)key, (char *)value);
 }
 
