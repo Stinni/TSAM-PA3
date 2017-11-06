@@ -54,4 +54,4 @@ dkms.conf
 # Project related files
 httpd
 bleh
-log.txt
+*.txt

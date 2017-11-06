@@ -46,7 +46,7 @@ typedef struct
 	int port;
 } ClientInfo;
 
-// SSL functions
+// Functions for connections and SSL
 int OpenListener(int port);
 SSL_CTX *InitServerCTX();
 void LoadCertificates(SSL_CTX *ctx, char *file);
@@ -67,15 +67,29 @@ void printHashMap(gpointer key, gpointer value, gpointer user_data);
 
 int main(int argc, char *argv[])
 {
-	if (argc < 2)
-	{
+	int port1, port2;
+	if (argc < 2) {
 		g_printf("Format expected is .src/httpd <port_number>\n");
-		exit(EXIT_SUCCESS);
+		exit(EXIT_FAILURE);
 	}
-	if (argc < 3)
-	{
-		// TODO: Do something here to figure out a port for the SSL connection
+
+	if(!(port1 = atoi(argv[1]))) {
+		g_printf("Incorrect format of first port number.\n");
+		exit(EXIT_FAILURE);
 	}
+
+	if (argc < 3) {
+		g_printf("Port number for SSL connection missing. We'll try finding one.\n");
+		port2 = port1 + 1;
+	}
+	else {
+		if(!(port2 = atoi(argv[2]))) {
+			g_printf("Incorrect format of second (SSL) port number.\n");
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	g_printf("Port1 is: %d - and port2 is: %d\n", port1, port2);
 
 	gchar message[MAX_MESSAGE_LENGTH];
 	memset(message, 0, sizeof(message));
@@ -90,7 +104,7 @@ int main(int argc, char *argv[])
 	memset(&server, 0, sizeof(server));
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = htonl(INADDR_ANY);
-	server.sin_port = htons(atoi(argv[1]));
+	server.sin_port = htons(port1);
 	bind(sockfd, (struct sockaddr *)&server, (socklen_t)sizeof(server));
 
 	/* Before the server can accept messages, it has to listen to the
@@ -220,6 +234,7 @@ int main(int argc, char *argv[])
 					sscanf(msgSplit[q], "%63[^: ]: %255[^\n]", tmp1, tmp2);
 					g_hash_table_insert(hash, tmp1, tmp2);
 				}
+				g_strfreev(msgSplit);
 
 				// For debugging. Iterates through the hash map and prints out each key-value pair
 				//g_hash_table_foreach(hash, (GHFunc)printHashMap, NULL);
@@ -233,6 +248,8 @@ int main(int argc, char *argv[])
 				if(cookieField) {
 					cookies = g_strdup_printf("%s", cookieField);
 				}
+				g_hash_table_foreach(hash, (GHFunc)freeHashMap, NULL);
+				g_hash_table_destroy(hash);
 
 				int persistent = 0;
 				if(g_str_has_prefix(firstLineSplit[2], "HTTP/1.0") && g_str_has_prefix(connField, "keep-alive")) {
@@ -265,11 +282,8 @@ int main(int argc, char *argv[])
 
 				if(cookies) g_free(cookies);
 				g_free(clientPort); g_free(hostField); g_free(connField);
-				if(msgSplit) g_strfreev(msgSplit);
 				g_strfreev(firstLineSplit);
 				g_strfreev(hostSplit);
-				g_hash_table_foreach(hash, (GHFunc)freeHashMap, NULL);
-				g_hash_table_destroy(hash);
 				memset(message, 0, sizeof(message));
 
 				// If it's not a persistent connection, we close it right here
@@ -399,8 +413,7 @@ gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *cl
 					tmp1 = tmp2;
 				}
 				thirdPart = g_strconcat(secondPart, tmp1, "</dl>\n", NULL);
-				g_free(tmp1);
-				g_strfreev(qSplit);
+				g_free(tmp1); g_strfreev(qSplit);
 			}
 			else
 			{
@@ -408,8 +421,7 @@ gchar *getPageStringForGet(gchar *host, gchar *reqURL, char *clientIP, gchar *cl
 			}
 
 			page = g_strconcat(thirdPart, "</body>\n</html>\n", NULL);
-			g_free(secondPart);
-			g_free(thirdPart);
+			g_free(secondPart); g_free(thirdPart);
 		}
 		else { // Creating the 'colour' page
 			if(colour) {
@@ -463,8 +475,7 @@ void logRecvMessage(char *clientIP, gchar *clientPort, gchar *reqMethod, gchar *
 		perror("fopen() failed");
 	}
 
-	g_free(logMsg);
-	g_free(theTime);
+	g_free(logMsg); g_free(theTime);
 }
 
 /**
@@ -480,9 +491,7 @@ void sendHeadResponse(int connfd, char *clientIP, gchar *clientPort, gchar *host
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "200");
-	g_free(theTime);
-	g_free(firstPart);
-	g_free(response);
+	g_free(theTime); g_free(firstPart); g_free(response);
 }
 
 /**
@@ -550,31 +559,29 @@ void processGetRequest(int connfd, char *clientIP, gchar *clientPort, gchar *hos
 	}
 	else
 	{
-		g_free(reqPage);
-		g_free(reqQuery);
+		g_free(reqPage); g_free(reqQuery);
 		sendNotFoundResponse(connfd, clientIP, clientPort, host, reqMethod, reqURL);
 		return;
 	}
 
 	gchar *theTime    = getCurrentDateTimeAsString();
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
-	gchar *firstPart  = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
+	gchar *theHeader  = g_strconcat("HTTP/1.1 200 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
 									contLength, "\r\nServer: TheMagicServer/2.1\r\n", NULL);
 
 	if(theBg) {
-		g_printf("theBg is: %s\n", theBg);
-		gchar *updateFirstPart = g_strconcat(firstPart, "Set-Cookie: bg=", theBg, "; Path=/colour\r\n",
+		gchar *updateTheHeader = g_strconcat(theHeader, "Set-Cookie: bg=", theBg, "; Path=/colour\r\n",
 											 "Set-Cookie: bg=", theBg, "; Path=/color\r\n", NULL);
-		g_free(firstPart);
-		firstPart = updateFirstPart;
+		g_free(theHeader);
+		theHeader = updateTheHeader;
 	}
 
-	gchar *response = per ? g_strconcat(firstPart, "Connection: keep-alive\r\n\r\n", page, NULL) :
-							g_strconcat(firstPart, "Connection: close\r\n\r\n", page, NULL);
+	gchar *response = per ? g_strconcat(theHeader, "Connection: keep-alive\r\n\r\n", page, NULL) :
+							g_strconcat(theHeader, "Connection: close\r\n\r\n", page, NULL);
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "200");
-	g_free(theTime); g_free(page); g_free(contLength); g_free(firstPart); g_free(response);
+	g_free(theTime); g_free(page); g_free(contLength); g_free(theHeader); g_free(response);
 	g_free(reqPage); g_free(reqQuery);
 	if(theBg) g_free(theBg);
 }
@@ -591,8 +598,7 @@ void sendNotFoundResponse(int connfd, char *clientIP, gchar *clientPort, gchar *
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "404");
-	g_free(theTime);
-	g_free(response);
+	g_free(theTime); g_free(response);
 }
 
 /**
@@ -604,16 +610,13 @@ void processPostRequest(int connfd, char *clientIP, gchar *clientPort, gchar *ho
 	gchar *theTime = getCurrentDateTimeAsString();
 	gchar *page = getPageStringForPost(host, reqURL, clientIP, clientPort, data);
 	gchar *contLength = g_strdup_printf("%i", (int)strlen(page));
-	gchar *firstPart = g_strconcat("HTTP/1.1 201 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
+	gchar *theHeader = g_strconcat("HTTP/1.1 201 OK\r\nDate: ", theTime, "\r\nContent-Type: text/html\r\nContent-length: ",
 								   contLength, "\r\nServer: TheMagicServer/2.1\r\nConnection: ", NULL);
-	gchar *response = per ? g_strconcat(firstPart, "keep-alive\r\n\r\n", page, NULL) : g_strconcat(firstPart, "close\r\n\r\n", page, NULL);
+	gchar *response = per ? g_strconcat(theHeader, "keep-alive\r\n\r\n", page, NULL) : g_strconcat(theHeader, "close\r\n\r\n", page, NULL);
 
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "201");
-	g_free(theTime);
-	g_free(page);
-	g_free(firstPart);
-	g_free(response);
+	g_free(theTime); g_free(page); g_free(theHeader); g_free(response);
 }
 
 /**
@@ -626,8 +629,7 @@ void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, g
 								  "Content-length: 0\r\nServer: TheMagicServer/2.1\r\nConnection: close\r\n\r\n", NULL);
 	send(connfd, response, strlen(response), 0);
 	logRecvMessage(clientIP, clientPort, reqMethod, host, reqURL, "501");
-	g_free(response);
-	g_free(theTime);
+	g_free(response); g_free(theTime);
 }
 
 /**
@@ -636,8 +638,7 @@ void sendNotImplementedResponce(int connfd, char *clientIP, gchar *clientPort, g
  */
 void freeHashMap(gpointer key, gpointer value, gpointer G_GNUC_UNUSED user_data)
 {
-	g_free(key);
-	g_free(value);
+	g_free(key); g_free(value);
 }
 
 /**
@@ -647,33 +648,4 @@ void freeHashMap(gpointer key, gpointer value, gpointer G_GNUC_UNUSED user_data)
 void printHashMap(gpointer key, gpointer value, gpointer G_GNUC_UNUSED user_data)
 {
 	g_printf("The key is \"%s\" and the value is \"%s\"\n", (char *)key, (char *)value);
-}
-
-/**
- * This function processes queries
- * Checks validity of queries, are queries always on the form ?test=1 or can they
- * be different?
- */
-void processQueryRequests() {}
-
-/**
- * This function takes in query items and creates a page that is displayed client side
- * when client asks for http://localhost/test with one or more queries
- * If called with no query then a normal GET request is used
- */
-
-// það væri hægt að smíða þetta beint inn í getrequests með tjékki á getURL?
-// ættu loggarnir líka að taka á queries?
-void processTestPageRequests()
-{
-}
-
-/**
- * This function is used when client asks for http://localhost/color, it builds the webpage
- * and returns it to the user based on the value in the bg query.
- * Additionally, it creates a colour cookie that the server uses to remember last colour
- * request from the client.
- */
-void processColorPageRequests()
-{
 }
